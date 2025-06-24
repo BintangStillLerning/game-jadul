@@ -3,14 +3,83 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
+function resizeCanvas() {
+  canvas.width = window.innerWidth * 0.9;
+  canvas.height = window.innerHeight * 0.7;
+}
+resizeCanvas();
+
 const paddle = {
   width: 120,
   height: 15,
   x: canvas.width / 2 - 60,
   y: canvas.height - 30,
-  speed: 10, // increased speed
+  speed: 15, // increased speed
   dx: 0,
 };
+
+// Block settings
+const blockWidth = 60;
+const blockHeight = 20;
+let blockPadding = 8;
+const blockOffsetTop = 100;
+const blockOffsetLeft = 35;
+
+let blockRowCount;
+let blockColumnCount;
+const blockDestroyedSound = new Audio("./destroyed.wav")
+
+blockDestroyedSound.volume = 0.7
+
+let blocks = [];
+
+function createBlocks() {
+  blocks = [];
+  for (let c = 0; c < blockColumnCount; c++) {
+    blocks[c] = [];
+    for (let r = 0; r < blockRowCount; r++) {
+      blocks[c][r] = {
+        x: 0,
+        y: 0,
+        status: 1, // 1 = red block, 2 = green block (goal)
+      };
+    }
+  }
+  // Set the top middle block as green goal block
+  const greenBlockColumn = Math.floor(blockColumnCount / 2);
+  if (blocks[greenBlockColumn] && blocks[greenBlockColumn][0]) {
+    blocks[greenBlockColumn][0].status = 2;
+  }
+}
+
+function updateBlockCounts() {
+  const availableWidth = canvas.width - blockOffsetLeft * 2;
+  blockColumnCount = Math.floor(availableWidth / (blockWidth + blockPadding));
+
+  const availableHeight = canvas.height - blockOffsetTop - 150; // leave space for paddle and UI
+  blockRowCount = Math.floor(availableHeight / (blockHeight + blockPadding));
+
+  // Adjust blockPadding based on screen width (optional)
+  if (window.innerWidth < 600) {
+    blockPadding = 3;
+  } else if (window.innerWidth < 900) {
+    blockPadding = 5;
+  } else {
+    blockPadding = 8;
+  }
+}
+
+function initializeGame() {
+  updateBlockCounts();
+  createBlocks();
+  paddle.y = canvas.height - 30;
+  paddle.x = Math.min(paddle.x, canvas.width - paddle.width);
+}
+
+window.addEventListener('resize', () => {
+  resizeCanvas();
+  initializeGame();
+});
 
 class Ball {
   constructor(x, y, dx, dy) {
@@ -110,31 +179,6 @@ let score = 0;
 let isGameOver = false;
 let isGameWon = false;
 
-// Block settings
-const blockRowCount = 5;
-const blockColumnCount = 10;
-const blockWidth = 60;
-const blockHeight = 20;
-const blockPadding = 8;
-const blockOffsetTop = 100;
-const blockOffsetLeft = 35;
-
-// Create blocks array
-const blocks = [];
-for (let c = 0; c < blockColumnCount; c++) {
-  blocks[c] = [];
-  for (let r = 0; r < blockRowCount; r++) {
-    blocks[c][r] = {
-      x: 0,
-      y: 0,
-      status: 1, // 1 = red block, 2 = green block (goal)
-    };
-  }
-}
-// Set the top middle block as green goal block
-const greenBlockColumn = Math.floor(blockColumnCount / 2);
-blocks[greenBlockColumn][0].status = 2;
-
 // Draw paddle
 function drawPaddle() {
   ctx.fillStyle = '#00ffcc';
@@ -205,6 +249,23 @@ function updatePaddle() {
   if (paddle.x + paddle.width > canvas.width) paddle.x = canvas.width - paddle.width;
 }
 
+let audioContext;
+function unlockAudioContext() {
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const buffer = audioContext.createBuffer(1, 1, 22050);
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+    source.start(0);
+  }
+}
+
+window.addEventListener('click', unlockAudioContext, { once: true });
+window.addEventListener('keydown', unlockAudioContext, { once: true });
+
+const blockHitSound = new Audio('sound efek game jadul/sfx pas ancurin maze2.wav');
+
 // Collision detection between ball and blocks
 function collisionDetection(ball) {
   for (let c = 0; c < blockColumnCount; c++) {
@@ -222,6 +283,9 @@ function collisionDetection(ball) {
             let destroyed = 0;
             for (let i = c; i < blockColumnCount && destroyed < 5; i++) {
               if (blocks[i][r].status > 0) {
+                if (blocks[i][r].status === 2) {
+                  isGameWon = true;
+                }
                 blocks[i][r].status = 0;
                 score++;
                 destroyed++;
@@ -230,10 +294,21 @@ function collisionDetection(ball) {
             ball.multiHit = false;
             ball.multiHitCount = 0;
           } else {
+            if (b.status === 2) {
+              isGameWon = true;
+              blockDestroyedSound.currentTime = 0;
+              blockDestroyedSound.play();
+            }
             b.status = 0;
             score++;
+            blockDestroyedSound.currentTime = 0;
+            blockDestroyedSound.play();
           }
           ball.dy = -ball.dy;
+
+          // Play block hit sound
+          blockHitSound.currentTime = 0;
+          blockHitSound.play();
 
           // Spawn power-up randomly (30% chance)
           if (Math.random() < 0.3) {
@@ -241,9 +316,6 @@ function collisionDetection(ball) {
             powerUps.push(new PowerUp(b.x + blockWidth / 2 - 10, b.y + blockHeight, type));
           }
 
-          if (b.status === 2) {
-            isGameWon = true;
-          }
           return; // only one block per collision
         }
       }
@@ -362,7 +434,6 @@ function keyUp(e) {
   }
 }
 
-// Restart game
 function restartGame() {
   score = 0;
   isGameOver = false;
@@ -371,19 +442,16 @@ function restartGame() {
   powerUps = [];
   paddle.x = canvas.width / 2 - paddle.width / 2;
   paddle.speed = 10;
-  // Reset blocks
-  for (let c = 0; c < blockColumnCount; c++) {
-    for (let r = 0; r < blockRowCount; r++) {
-      blocks[c][r].status = 1;
-    }
-  }
-  blocks[greenBlockColumn][0].status = 2;
+  initializeGame();
   loop();
 }
 
 // Event listeners
 document.addEventListener('keydown', keyDown);
 document.addEventListener('keyup', keyUp);
+
+// Initialize game for the first time
+initializeGame();
 
 // Start the game loop
 loop();
